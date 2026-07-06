@@ -85,6 +85,16 @@ namespace LiteMonitor.src.UI.Helpers
             }
         }
 
+        public void ResetLayoutState()
+        {
+            // 挂载目标迁移到另一个任务栏时调用：旧任务栏的挤占记录对新任务栏无意义，
+            // 若不清除，TryAdjustLayout 会用旧值误判 isSqueezed 导致挤占量计算错误
+            _lastSqueezedWidth = -1;
+            _lastSqueezedHeight = -1;
+            _lastUsedWidth = 0;
+            _lastUsedHeight = 0;
+        }
+
         private void InitializeHandles(IntPtr hTaskbar)
         {
             // Win10 结构：Shell_TrayWnd -> ReBarWindow32 -> MSTaskSwWClass

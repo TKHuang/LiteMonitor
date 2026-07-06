@@ -37,6 +37,12 @@ namespace LiteMonitor.src.UI.Helpers
         void Restore();
 
         /// <summary>
+        /// 重置内部布局状态 (挤占记录等)。
+        /// 在挂载目标迁移到另一个任务栏时调用，防止旧任务栏的状态残留影响新任务栏的布局计算。
+        /// </summary>
+        void ResetLayoutState();
+
+        /// <summary>
         /// 获取期望的父窗口句柄（用于检测是否脱离）
         /// </summary>
         IntPtr GetExpectedParent(IntPtr taskbarHandle);
@@ -181,28 +187,51 @@ namespace LiteMonitor.src.UI.Helpers
             _strategy.Restore();
         }
 
+        public void ResetLayoutState()
+        {
+            _strategy.ResetLayoutState();
+        }
+
         // =================================================================
         // 句柄与信息获取 (通用逻辑)
         // =================================================================
-        public (IntPtr hTaskbar, IntPtr hTray) FindHandles(string targetDevice)
+        public (IntPtr hTaskbar, IntPtr hTray, bool isFallback) FindHandles(string targetDevice)
         {
+            // isFallback = true 表示目标屏幕的专属任务栏当前不存在（开机自启时副屏/副屏任务栏
+            // 可能尚未创建），暂时回退到主屏任务栏。调用方应周期性重试，待目标任务栏出现后迁移。
             Screen target = Screen.PrimaryScreen;
+            bool deviceMissing = false;
             if (!string.IsNullOrEmpty(targetDevice))
             {
-                target = Screen.AllScreens.FirstOrDefault(s => s.DeviceName == targetDevice) ?? Screen.PrimaryScreen;
+                var found = Screen.AllScreens.FirstOrDefault(s => s.DeviceName == targetDevice);
+                deviceMissing = (found == null);
+                target = found ?? Screen.PrimaryScreen;
             }
 
             if (target.Primary)
             {
-                IntPtr hTaskbar = FindWindow("Shell_TrayWnd", null);
-                IntPtr hTray = FindWindowEx(hTaskbar, IntPtr.Zero, "TrayNotifyWnd", null);
-                return (hTaskbar, hTray);
+                var (hTaskbar, hTray) = FindPrimaryTaskbar();
+                return (hTaskbar, hTray, deviceMissing);
             }
             else
             {
                 IntPtr hTaskbar = FindSecondaryTaskbar(target);
-                return (hTaskbar, IntPtr.Zero);
+                if (hTaskbar != IntPtr.Zero)
+                {
+                    return (hTaskbar, IntPtr.Zero, false);
+                }
+
+                // 副屏任务栏尚未创建：回退主屏任务栏（带托盘句柄以便正确定位），并标记 fallback
+                var (hPrimary, hPrimaryTray) = FindPrimaryTaskbar();
+                return (hPrimary, hPrimaryTray, true);
             }
+        }
+
+        private static (IntPtr hTaskbar, IntPtr hTray) FindPrimaryTaskbar()
+        {
+            IntPtr hTaskbar = FindWindow("Shell_TrayWnd", null);
+            IntPtr hTray = FindWindowEx(hTaskbar, IntPtr.Zero, "TrayNotifyWnd", null);
+            return (hTaskbar, hTray);
         }
 
         private IntPtr FindSecondaryTaskbar(Screen screen)
@@ -215,7 +244,7 @@ namespace LiteMonitor.src.UI.Helpers
                 if (screen.Bounds.Contains(r.Location) || screen.Bounds.IntersectsWith(r))
                     return hWnd;
             }
-            return FindWindow("Shell_TrayWnd", null);
+            return IntPtr.Zero;
         }
 
         public Rectangle GetTaskbarRect(IntPtr hTaskbar, string targetDevice)
@@ -237,9 +266,11 @@ namespace LiteMonitor.src.UI.Helpers
             try
             {
                 Screen screen = null;
-                if (!string.IsNullOrEmpty(targetDevice)) 
+                if (!string.IsNullOrEmpty(targetDevice))
                     screen = Screen.AllScreens.FirstOrDefault(s => s.DeviceName == targetDevice);
-                if (screen == null) 
+                // [Fix] 目标屏幕与任务栏实际所在屏幕不一致时（如 fallback 挂在主屏任务栏上），
+                // 必须以任务栏实际所在屏幕为准，防止跨屏混算出父窗口 client 区外的坐标导致子窗口被裁剪不可见
+                if (screen == null || !screen.Bounds.IntersectsWith(rectPhys))
                     screen = Screen.FromHandle(hTaskbar);
 
                 if (screen != null)

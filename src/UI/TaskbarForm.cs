@@ -75,6 +75,18 @@ namespace LiteMonitor
             Tick();
         }
 
+        /// <summary>
+        /// 重新校验任务栏绑定 (显示器拓扑变更后调用)。
+        /// 重新查找目标屏幕的任务栏句柄；若句柄发生迁移，FindHandles 内部会自动重新挂载。
+        /// 未变化时无任何副作用 (不重建、不闪烁)。
+        /// </summary>
+        public void RefreshTaskbarBinding()
+        {
+            if (IsDisposed) return;
+            _bizHelper.FindHandles();
+            _lastFindHandleTime = DateTime.Now;
+        }
+
         public void ReloadLayout()
         {
             _layout = new HorizontalLayout(ThemeManager.Current, 300, LayoutMode.Taskbar, _cfg);
@@ -174,9 +186,13 @@ namespace LiteMonitor
             // [Fix] 周期性检查句柄，防止 Explorer 重启后句柄失效
             // 优化：仅在重试期或句柄无效时调用 FindHandles，且限制调用频率
             bool isHandleInvalid = !_bizHelper.IsTaskbarValid();
-            
+
+            // [Fix] 开机自启时目标副屏的任务栏可能尚未创建，FindHandles 会回退到主屏任务栏 (IsFallbackHandle)。
+            // 此时也需要周期性重试；待目标任务栏出现后，FindHandles 检测到句柄变化会自动迁移挂载。
+            bool needRediscover = isHandleInvalid || _bizHelper.IsFallbackHandle;
+
             // 如果处于重试期，或者句柄无效且距离上次查找超过2秒(防止无Explorer时高频空转)
-            if (isHandleInvalid && (DateTime.Now - _lastFindHandleTime).TotalSeconds > 2)
+            if (needRediscover && (DateTime.Now - _lastFindHandleTime).TotalSeconds > 2)
             {
                 _bizHelper.FindHandles();
                 _lastFindHandleTime = DateTime.Now;

@@ -76,6 +76,11 @@ namespace LiteMonitor.src.UI.Helpers
             // Win11 模式没有修改系统窗口，不需要恢复
         }
 
+        public void ResetLayoutState()
+        {
+            // Win11 模式没有内部布局状态，无需重置
+        }
+
         public IntPtr GetExpectedParent(IntPtr taskbarHandle)
         {
             return taskbarHandle;

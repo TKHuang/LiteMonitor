@@ -21,6 +21,7 @@ namespace LiteMonitor.src.UI.Helpers
         private int _taskbarHeight = 32;
         private IntPtr _hTaskbar = IntPtr.Zero;
         private IntPtr _hTray = IntPtr.Zero;
+        private bool _isFallbackHandle = false;
         private bool _isWin11;
         
         // 样式相关
@@ -32,6 +33,10 @@ namespace LiteMonitor.src.UI.Helpers
         public IntPtr HandleTaskbar => _hTaskbar;
         public Color TransparentKey => _transparentKey;
         public bool LastIsLightTheme => _lastIsLightTheme;
+
+        // 当前持有的是否为回退句柄（目标屏幕的任务栏尚不存在，暂挂主屏任务栏）
+        // 为 true 时调用方应周期性重试 FindHandles，待目标任务栏出现后自动迁移
+        public bool IsFallbackHandle => _isFallbackHandle;
 
         public TaskbarBizHelper(Form form, Settings cfg, TaskbarWinHelper winHelper)
         {
@@ -85,10 +90,32 @@ namespace LiteMonitor.src.UI.Helpers
         public void FindHandles()
         {
             var handles = _winHelper.FindHandles(_cfg.TaskbarMonitorDevice);
+            IntPtr oldHandle = _hTaskbar;
+            bool changed = (handles.hTaskbar != _hTaskbar);
             _hTaskbar = handles.hTaskbar;
             _hTray = handles.hTray;
+            _isFallbackHandle = handles.isFallback;
+
+            // [Fix] 任务栏句柄发生迁移时（副屏任务栏延迟创建后被找到 / Explorer 重启后句柄更新），
+            // 显式重新挂载：先还原旧任务栏布局 (Win10 挤占模式)、清除旧布局状态，再挂载到新任务栏。
+            // 不能依赖 SetPosition 的父窗口自检，Win10 策略的 GetExpectedParent 会返回旧 ReBar 导致漏挂。
+            // 注意：oldHandle == Zero 的首次查找不在此挂载（构造函数会显式调用 AttachToTaskbar），保持时序确定。
+            if (changed && oldHandle != IntPtr.Zero && _hTaskbar != IntPtr.Zero && _form.IsHandleCreated)
+            {
+                if (TaskbarWinHelper.IsWindow(oldHandle))
+                {
+                    _winHelper.RestoreTaskbar();
+                }
+                _winHelper.ResetLayoutState();
+                _winHelper.AttachToTaskbar(_hTaskbar);
+            }
         }
 
+        /// <summary>
+        /// 判断当前句柄是否为有效窗口。
+        /// 注意：返回 true 不代表挂载目标正确 —— 回退句柄 (主屏任务栏) 同样有效，
+        /// "是否挂对了屏幕" 请用 <see cref="IsFallbackHandle"/> 判断。
+        /// </summary>
         public bool IsTaskbarValid()
         {
             if (_hTaskbar == IntPtr.Zero) return false;

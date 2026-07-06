@@ -266,11 +266,21 @@ namespace LiteMonitor
                 _displayChangeCts = new System.Threading.CancellationTokenSource();
                 var token = _displayChangeCts.Token;
 
-                Task.Delay(500, token).ContinueWith(t => 
+                Task.Delay(500, token).ContinueWith(t =>
                 {
                     if (!t.IsCanceled)
                     {
-                        this.BeginInvoke(new Action(() => _bizHelper?.RestorePos()));
+                        this.BeginInvoke(new Action(() =>
+                        {
+                            _bizHelper?.RestorePos();
+
+                            // [Fix] 显示器接入/移除后 (如开机时副屏延迟就绪、串流虚拟屏挂载)，
+                            // 重新校验任务栏小部件的挂载目标，必要时迁移到正确屏幕的任务栏
+                            if (_taskbar != null && !_taskbar.IsDisposed)
+                            {
+                                _taskbar.RefreshTaskbarBinding();
+                            }
+                        }));
                     }
                 });
             }
